@@ -14,7 +14,7 @@ def save_message():
     msg = request.form["msg"]
     print(f"Got message: {msg}")
     key = request.form["uuid"]
-    print(f"Created пgot UUID: {key}")
+    print(f"Got UUID: {key}")
 
     data[key] = msg
 
