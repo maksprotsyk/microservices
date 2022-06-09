@@ -1,11 +1,9 @@
 from flask import Flask, request, jsonify
-from werkzeug.exceptions import BadRequest
-import requests
+import sys
+import hazelcast
 
 
 logging = Flask(__name__)
-
-data = {}
 
 
 @logging.route('/', methods=['POST'])
@@ -16,19 +14,20 @@ def save_message():
     key = request.form["uuid"]
     print(f"Got UUID: {key}")
 
-    data[key] = msg
+    logging.config["map"].put(key, msg)
 
     return jsonify(success=True)
 
 
-
 @logging.route('/', methods=['GET'])
 def get_all_strings():
-    return "".join(data.values())
-
-
-
+    return "".join(logging.config["map"].values())
 
 
 if __name__ == '__main__':
-    logging.run(port=5100)
+    client = hazelcast.HazelcastClient(
+        cluster_name="distributed_map"
+    )
+    logging.config["map"] = client.get_map("messages-map").blocking()
+    if len(sys.argv) != 1:
+        logging.run(port=int(sys.argv[1]))
