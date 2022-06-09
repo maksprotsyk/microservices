@@ -3,6 +3,7 @@ import uuid
 import requests
 import random
 import hazelcast
+import consul
 
 
 facade = Flask(__name__)
@@ -17,17 +18,28 @@ def post_message():
 
     facade.config["queue"].put(msg)
 
-    indexes = list(range(len(facade.config["logging-service"])))
+    services = facade.config["consul"].agent.services()
+
+    logging_services = []
+
+    for name, service in services.items():
+        if "logging" not in service["Tags"]:
+            continue
+        logging_services.append(service)
+
+    indexes = list(range(len(logging_services)))
     random.shuffle(indexes)
 
     for ind in indexes:
         try:
+            address = f"{logging_services[ind]['Address']}:{logging_services[ind]['Port']}/"
             res = requests.post(
-                facade.config["logging-service"][ind],
+                address,
                 data={'uuid': str(key), "msg": msg}
             )
             break
         except requests.exceptions.ConnectionError:
+            facade.config["consul"].agent.deregister(logging_services[ind]["ID"])
             continue
     else:
         return jsonify(success=False, error="Logging service is not available", code=-2)
@@ -41,16 +53,30 @@ def post_message():
 
 @facade.route('/', methods=['GET'])
 def get_all_strings():
-    indexes = list(range(len(facade.config["logging-service"])))
+
+    services = facade.config["consul"].agent.services()
+
+    logging_services = []
+    messages_services = []
+
+    for name, service in services.items():
+        if "logging" in service["Tags"]:
+            logging_services.append(service)
+        elif "messages" in service["Tags"]:
+            messages_services.append(service)
+
+    indexes = list(range(len(logging_services)))
     random.shuffle(indexes)
 
     for ind in indexes:
         try:
+            address = f"{logging_services[ind]['Address']}:{logging_services[ind]['Port']}/"
             logging_res = requests.get(
-                facade.config["logging-service"][ind]
+                address
             )
             break
         except requests.exceptions.ConnectionError:
+            facade.config["consul"].agent.deregister(logging_services[ind]["ID"])
             continue
     else:
         return jsonify(success=False, error="Logging service is not available", code=-2)
@@ -61,16 +87,18 @@ def get_all_strings():
 
     print("Got data from logging service")
 
-    indexes = list(range(len(facade.config["messages-service"])))
+    indexes = list(range(len(messages_services)))
     random.shuffle(indexes)
 
     for ind in indexes:
         try:
+            address = f"{messages_services[ind]['Address']}:{messages_services[ind]['Port']}/"
             messages_res = requests.get(
-                facade.config["messages-service"][ind]
+                address
             )
             break
         except requests.exceptions.ConnectionError:
+            facade.config["consul"].agent.deregister(messages_services[ind]["ID"])
             continue
     else:
         return jsonify(success=False, error="Messages service is not available", code=-2)
@@ -85,12 +113,17 @@ def get_all_strings():
 
 
 def main():
+    facade.config["consul"] = consul.Consul()
+
+    cluster_name = facade.config["consul"].kv.get("cluster_name")[1]["Value"].decode()
     client = hazelcast.HazelcastClient(
-        cluster_name="distributed_map"
+        cluster_name=cluster_name
     )
-    facade.config["logging-service"] = ["http://127.0.0.1:5100/", "http://127.0.0.1:5101/", "http://127.0.0.1:5102/"]
-    facade.config["messages-service"] = ["http://127.0.0.1:5201/", "http://127.0.0.1:5202/"]
-    facade.config["queue"] = client.get_queue("messages-queue").blocking()
+
+    queue_name = facade.config["consul"].kv.get("queue_name")[1]["Value"].decode()
+    facade.config["queue"] = client.get_queue(
+        queue_name
+    ).blocking()
     facade.run()
 
 

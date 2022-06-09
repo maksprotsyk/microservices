@@ -2,6 +2,7 @@ from flask import Flask
 import hazelcast
 import sys
 import threading
+import consul
 
 messages = Flask(__name__)
 
@@ -24,18 +25,37 @@ def queue_reader():
 
 
 def main():
+    if len(sys.argv) == 1:
+        return
+
+    port = int(sys.argv[1])
+    messages.config["consul"] = consul.Consul()
+
+    cluster_name = messages.config["consul"].kv.get("cluster_name")[1]["Value"].decode()
     client = hazelcast.HazelcastClient(
-        cluster_name="distributed_map"
+        cluster_name=cluster_name
     )
-    messages.config["queue"] = client.get_queue("messages-queue").blocking()
+
+    queue_name = messages.config["consul"].kv.get("queue_name")[1]["Value"].decode()
+    messages.config["queue"] = client.get_queue(
+        queue_name
+    ).blocking()
+
     messages.config["messages"] = []
     messages.config["lock"] = threading.Lock()
 
     thread = threading.Thread(target=queue_reader)
     thread.start()
 
-    if len(sys.argv) != 1:
-        messages.run(port=int(sys.argv[1]))
+    name = f"messages:{port}"
+    messages.config["consul"].agent.service.register(
+        name=name,
+        service_id=name,
+        tags=["messages"],
+        address="http://127.0.0.1", port=port,
+    )
+
+    messages.run(port=port)
 
     thread.join()
 
