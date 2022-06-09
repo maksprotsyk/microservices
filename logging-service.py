@@ -24,10 +24,14 @@ def get_all_strings():
     return "".join(logging.config["map"].values())
 
 
-if __name__ == '__main__':
+def main():
     client = hazelcast.HazelcastClient(
         cluster_name="distributed_map"
     )
     logging.config["map"] = client.get_map("messages-map").blocking()
     if len(sys.argv) != 1:
         logging.run(port=int(sys.argv[1]))
+
+
+if __name__ == '__main__':
+    main()
